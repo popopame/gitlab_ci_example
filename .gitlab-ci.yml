@@ -1,0 +1,150 @@
+stages:
+  - test
+  - publish_registry
+  - publish_production
+  - publish_preprod
+  - publish_staging
+  - deploy_production
+  - deploy_preprod
+  - deploy_staging
+#Run Tests
+testing:
+  stage: test
+  image: node:10
+  script:
+    - npm install --silent
+    - npm test
+#Build the App
+build_production_npm_t"""""est:
+  stage : test
+  image : node:10
+  script :
+    - npm install --silent
+    - npm run build
+  only:
+    - production
+
+
+#Publish a First Image if a Rollback is needed
+
+publish_registry:
+  stage: publish_registry
+  dependencies:
+    - testing
+    - build_production_npm_test
+  image: docker:latest
+  services: ['docker:dind']
+  before_script:
+    - docker_tag=${CI_COMMIT_SHORT_SHA}_${CI_COMMIT_REF_NAME}
+  script:
+    - docker build -t ${CI_REGISTRY_IMAGE}:$docker_tag .
+    - echo $ci_token_registry | docker login --username $ci_username_registry --password-stdin $ci_registry
+    - docker push ${CI_REGISTRY_IMAGE}:$docker_tag
+
+
+
+#Publish in production
+
+publish_registry_production:
+  stage: publish_production
+  dependencies:
+    - testing
+    - build_production_npm_test
+    - publish_registry
+  image: docker:latest
+  services: ['docker:dind']
+  script:
+    - echo $ci_token_registry | docker login $ci_registry --username $ci_username_registry --password-stdin
+    - docker build -t ${CI_REGISTRY_IMAGE}:latest .
+    - docker push ${CI_REGISTRY_IMAGE}:latest
+  only:
+    - production
+
+
+#Deploy in Production
+
+deploy_production:
+  stage: deploy_production
+  dependencies:
+    - testing
+    - build_production_npm_test
+    - publish_registry
+    - publish_registry_production
+  image: bitnami/kubectl:latest
+  before_script:
+    - export CI_BUILD_REF="production"
+    - kubectl create --server ${KUBERNETES_ENDPOINT} --token $CI_GITLAB_TOKEN} -f ${CI_YAML_DEPLOYMENT} --namespace ${CI_COMMIT_REF_NAME}
+  script:
+    - kubectl --namespace ${CI_COMMIT_REF_NAME} set image deployment.v1.apps/epsor-pod epsor-pod=${CI_REGISTRY_IMAGE}:${CI_BUILD_REF}
+  only:
+    - production
+
+
+#Publish with preprod tag
+
+publish_registry_preprod:
+  stage: publish_preprod
+  dependencies:
+    - testing
+    - build_production_npm_test
+    - publish_registry
+  image: docker:latest
+  services: ['docker:dind']
+  script:
+    - echo $ci_token_registry | docker login $ci_registry --username $ci_username_registry --password-stdin
+    - docker build -t ${CI_REGISTRY_IMAGE}:latest .
+    - docker push ${CI_REGISTRY_IMAGE}:latest_preprod
+  only:
+    - preprod
+
+#Deploy in preprod namespace
+deploy_preprod:
+  stage: deploy_preprod
+  dependencies:
+    - testing
+    - build_production_npm_test
+    - publish_registry
+    - publish_registry_preprod
+  image: bitnami/kubectl:latest
+  before_script:
+    - export CI_BUILD_REF="preprod"
+    - kubectl create --server ${KUBERNETES_ENDPOINT} --token $CI_GITLAB_TOKEN} -f ${CI_YAML_DEPLOYMENT} --namespace ${CI_COMMIT_REF_NAME}
+  script:
+    - kubectl --namespace ${CI_COMMIT_REF_NAME} set image deployment.v1.apps/epsor-pod epsor-pod=${CI_REGISTRY_IMAGE}:${CI_BUILD_REF}
+  only:
+    - preprod
+
+
+#Publish in the staging registery
+
+publish_registry_staging:
+  stage: publish_staging
+  dependencies:
+    - testing
+    - build_production_npm_test
+    - publish_registry
+  image: docker:latest
+  services: ['docker:dind']
+  script:
+    - echo $ci_token_registry | docker login $ci_registry --username $ci_username_registry --password-stdin
+    - docker build -t ${CI_REGISTRY_IMAGE}:latest .
+    - docker push ${CI_REGISTRY_IMAGE}:latest_staging
+  only:
+    - staging
+
+#Deploy in Preprod Namespace
+deploy_preprod:
+  stage: deploy_staging
+  dependencies:
+    - testing
+    - build_production_npm_test
+    - publish_registry
+    - publish_registry_staging
+  image: bitnami/kubectl:latest
+  before_script:
+    - export CI_BUILD_REF="staging"
+    - kubectl create --server ${KUBERNETES_ENDPOINT} --token $CI_GITLAB_TOKEN} -f ${CI_YAML_DEPLOYMENT} --namespace ${CI_COMMIT_REF_NAME}
+  script:
+    - kubectl --namespace ${CI_COMMIT_REF_NAME} set image deployment.v1.apps/epsor-pod epsor-pod=${CI_REGISTRY_IMAGE}:${CI_BUILD_REF}
+  only:
+    - staging
